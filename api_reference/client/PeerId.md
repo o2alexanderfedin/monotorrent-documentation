@@ -170,6 +170,173 @@ bool hasRange = peerId.HasPieces(startPiece, endPiece);
 Console.WriteLine($"Peer has pieces {startPiece}-{endPiece}: {hasRange}");
 ```
 
+### Implementing a Peer Selection Strategy
+
+```csharp
+// Get all connected peers from a torrent manager
+TorrentManager manager = /* ... */;
+List<PeerId> connectedPeers = manager.Peers.ConnectedPeers.ToList();
+
+// Sort peers by download speed
+var fastestPeers = connectedPeers
+    .OrderByDescending(p => p.Monitor.DownloadSpeed)
+    .ToList();
+
+Console.WriteLine("Top 5 fastest peers:");
+foreach (var peer in fastestPeers.Take(5))
+{
+    Console.WriteLine($"- {peer.Peer.Peer}: {peer.Monitor.DownloadSpeed / 1024} KB/s");
+}
+
+// Find peers that are unchoked and interested in our data (potential uploaders)
+var uploadingPeers = connectedPeers
+    .Where(p => !p.AmChoking && p.IsInterested)
+    .ToList();
+
+Console.WriteLine($"Currently uploading to {uploadingPeers.Count} peers");
+
+// Find peers that are not choking us and have pieces we need (potential downloaders)
+var downloadingPeers = connectedPeers
+    .Where(p => !p.IsChoking && p.AmInterested)
+    .ToList();
+
+Console.WriteLine($"Currently downloading from {downloadingPeers.Count} peers");
+
+// Calculate the overall health of the swarm
+double averageAvailability = 0;
+if (manager.Bitfield.Length > 0)
+{
+    int[] pieceCounts = new int[manager.Bitfield.Length];
+    
+    // Count availability of each piece
+    foreach (var peer in connectedPeers)
+    {
+        for (int i = 0; i < manager.Bitfield.Length; i++)
+        {
+            if (peer.HasPiece(i))
+                pieceCounts[i]++;
+        }
+    }
+    
+    // Calculate average piece availability
+    averageAvailability = pieceCounts.Average();
+}
+
+Console.WriteLine($"Average piece availability: {averageAvailability:F2} copies");
+```
+
+### Implementing a Custom Choke/Unchoke Algorithm
+
+```csharp
+// This example shows how you might implement a custom choke/unchoke algorithm
+// Note: In actual MonoTorrent code, this is handled internally
+
+// Get the torrent manager and its connected peers
+TorrentManager manager = /* ... */;
+List<PeerId> connectedPeers = manager.Peers.ConnectedPeers.ToList();
+
+// Step 1: Sort peers by their upload rate to us (to implement tit-for-tat)
+var sortedPeers = connectedPeers
+    .OrderByDescending(p => p.Monitor.DownloadSpeed)
+    .ToList();
+
+// Step 2: Determine how many upload slots we have available
+int uploadSlots = manager.Settings.UploadSlots;
+Console.WriteLine($"We have {uploadSlots} upload slots available");
+
+// Step 3: Unchoke the best uploaders (tit-for-tat)
+int unchokedCount = 0;
+foreach (var peer in sortedPeers)
+{
+    bool shouldUnchoke = unchokedCount < uploadSlots;
+    
+    // If we're changing the peer's choke state, send the appropriate message
+    if (peer.AmChoking && shouldUnchoke)
+    {
+        // Unchoke this peer
+        Console.WriteLine($"Unchoking peer {peer.Peer.Peer} (upload: {peer.Monitor.DownloadSpeed / 1024} KB/s)");
+        peer.EnqueueMessage(new UnchokeMessage());
+        unchokedCount++;
+    }
+    else if (!peer.AmChoking && !shouldUnchoke)
+    {
+        // Choke this peer
+        Console.WriteLine($"Choking peer {peer.Peer.Peer}");
+        peer.EnqueueMessage(new ChokeMessage());
+    }
+}
+
+// Step 4: Optimistic unchoke - randomly unchoke one more peer
+// This helps discover faster peers and prevent swarm deadlock
+if (sortedPeers.Count > uploadSlots)
+{
+    // Get list of choked peers that are interested in our data
+    var chokedInterestedPeers = sortedPeers
+        .Skip(uploadSlots)
+        .Where(p => p.AmChoking && p.IsInterested)
+        .ToList();
+    
+    if (chokedInterestedPeers.Count > 0)
+    {
+        // Randomly choose one for optimistic unchoking
+        Random random = new Random();
+        int index = random.Next(chokedInterestedPeers.Count);
+        PeerId luckyPeer = chokedInterestedPeers[index];
+        
+        Console.WriteLine($"Optimistically unchoking peer {luckyPeer.Peer.Peer}");
+        luckyPeer.EnqueueMessage(new UnchokeMessage());
+    }
+}
+```
+
+### Handling Metadata Exchange with a Peer
+
+```csharp
+// This example demonstrates how you might handle metadata exchange with a peer
+// that supports the extension protocol (for magnet links)
+
+// Get a PeerId from a torrent manager
+PeerId peerId = /* ... */;
+TorrentManager manager = peerId.TorrentManager;
+
+// Check if we need metadata and the peer supports the metadata exchange extension
+if (manager.MetadataComplete == false && 
+    peerId.SupportsLTMessages && 
+    peerId.ExtensionSupports.Supports(MetadataMessage.Support))
+{
+    Console.WriteLine("Peer supports metadata exchange! Requesting metadata...");
+    
+    // In a real implementation, MonoTorrent handles this automatically
+    // This is just a demonstration of the concept
+    
+    // 1. First, determine the size of the metadata
+    int metadataSize = 0; // This would be obtained from the handshake
+    
+    // 2. Calculate how many pieces the metadata has
+    int pieceLength = 16384; // Standard metadata piece length
+    int pieceCount = (metadataSize + pieceLength - 1) / pieceLength;
+    
+    // 3. Request each piece of the metadata
+    for (int i = 0; i < pieceCount; i++)
+    {
+        Console.WriteLine($"Requesting metadata piece {i}/{pieceCount-1}");
+        
+        // In a real implementation, you'd use the extension message system
+        // to send a proper metadata request
+        //peerId.EnqueueMessage(new MetadataMessage(i));
+    }
+    
+    // 4. When all pieces are received, they would be assembled and
+    // used to create a Torrent object
+    
+    Console.WriteLine("In actual MonoTorrent implementation, metadata exchange is automatic");
+}
+else if (manager.MetadataComplete == false)
+{
+    Console.WriteLine("Peer does not support metadata exchange, cannot download via magnet link");
+}
+```
+
 ## BitTorrent Protocol State
 
 Each peer connection maintains state to handle the BitTorrent protocol:

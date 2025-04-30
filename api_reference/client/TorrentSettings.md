@@ -127,6 +127,154 @@ TorrentSettings privateSettings = new TorrentSettings
 TorrentManager manager = new TorrentManager(torrent, downloadDirectory, privateSettings);
 ```
 
+### Low-Bandwidth Settings
+
+```csharp
+// Create settings for use on metered connections
+TorrentSettings lowBandwidthSettings = new TorrentSettings
+{
+    // Strict bandwidth limits
+    MaxDownloadSpeed = 25 * 1024,  // 25 KB/s
+    MaxUploadSpeed = 5 * 1024,     // 5 KB/s
+    
+    // Reduce connections to minimize overhead
+    MaxConnections = 15,
+    UploadSlots = 2,
+    
+    // Slower tracker updates to reduce traffic
+    MinimumTimeBetweenAnnounces = TimeSpan.FromMinutes(10),
+    
+    // Keep DHT active but limit encryption overhead
+    AllowDht = true,
+    AllowPeerExchange = true,
+    PreferEncryption = false,
+    AllowedEncryption = EncryptionTypes.PlainText
+};
+
+TorrentManager manager = new TorrentManager(torrent, downloadDirectory, lowBandwidthSettings);
+```
+
+### Media Streaming Optimization
+
+```csharp
+// Settings optimized for streaming media content
+TorrentSettings streamingSettings = new TorrentSettings
+{
+    // Allow many connections to find pieces quickly
+    MaxConnections = 75,
+    UploadSlots = 6,
+    
+    // Prioritize download speed, generous upload to reciprocate
+    MaxDownloadSpeed = 0,          // Unlimited
+    MaxUploadSpeed = 150 * 1024,   // 150 KB/s
+    
+    // Enable all peer finding methods
+    AllowDht = true,
+    AllowPeerExchange = true,
+    
+    // Use all connection types to maximize piece availability
+    AllowedEncryption = EncryptionTypes.All,
+    
+    // Critical for streaming - enables sequential piece downloading
+    // (Note: In actual implementation, streaming is configured via 
+    // the StreamingTorrentManager or StreamProvider class)
+};
+
+TorrentManager manager = new TorrentManager(torrent, downloadDirectory, streamingSettings);
+
+// Example of enabling streaming mode
+// StreamProvider streamProvider = new StreamProvider(manager);
+// HttpStream stream = streamProvider.CreateHttpStream();
+// string streamUrl = stream.Uri.ToString();
+```
+
+### Initial Seeding Configuration
+
+```csharp
+// Settings for the initial seeder of a torrent
+TorrentSettings initialSeedSettings = new TorrentSettings
+{
+    // Enable initial seeding mode - this helps distribute pieces optimally
+    // to ensure the torrent spreads efficiently with minimal uploaded data
+    InitialSeedingEnabled = true,
+    
+    // Set generous upload limits since we're the primary seed
+    MaxUploadSpeed = 500 * 1024,  // 500 KB/s
+    UploadSlots = 15,
+    
+    // Allow many connections to distribute to as many peers as possible
+    MaxConnections = 150,
+    
+    // Enable all peer discovery methods
+    AllowDht = true,
+    AllowPeerExchange = true,
+    
+    // Use standard announce interval since we want to advertise availability
+    MinimumTimeBetweenAnnounces = TimeSpan.FromMinutes(5)
+};
+
+// Create a torrent manager with these settings
+TorrentManager manager = new TorrentManager(torrent, downloadDirectory, initialSeedSettings);
+
+// Event handler to detect when initial seeding is no longer needed
+manager.TorrentStateChanged += (sender, e) => {
+    if (manager.Complete && manager.Settings.InitialSeedingEnabled)
+    {
+        // Once we have multiple seeds, we can disable initial seeding mode
+        if (manager.Peers.Seeds > 3)
+        {
+            var newSettings = manager.Settings.Clone();
+            newSettings.InitialSeedingEnabled = false;
+            manager.Settings = newSettings;
+            Console.WriteLine("Switched from initial seeding to normal seeding mode");
+        }
+    }
+};
+```
+
+### Changing Settings at Runtime
+
+```csharp
+// Get a reference to an existing TorrentManager
+TorrentManager manager = /* ... */;
+
+// Make a copy of the current settings
+TorrentSettings newSettings = manager.Settings.Clone();
+
+// Modify settings based on time of day
+var currentHour = DateTime.Now.Hour;
+if (currentHour >= 22 || currentHour < 8) 
+{
+    // Night-time settings: higher limits during off-peak hours
+    Console.WriteLine("Applying night-time bandwidth settings");
+    newSettings.MaxUploadSpeed = 500 * 1024;   // 500 KB/s
+    newSettings.MaxDownloadSpeed = 0;          // Unlimited
+    newSettings.MaxConnections = 100;
+    newSettings.UploadSlots = 12;
+}
+else if (currentHour >= 8 && currentHour < 18)
+{
+    // Work-hours settings: strict limits to preserve bandwidth
+    Console.WriteLine("Applying work-hours bandwidth restrictions");
+    newSettings.MaxUploadSpeed = 20 * 1024;    // 20 KB/s
+    newSettings.MaxDownloadSpeed = 50 * 1024;  // 50 KB/s
+    newSettings.MaxConnections = 25;
+    newSettings.UploadSlots = 3;
+}
+else
+{
+    // Evening settings: moderate limits
+    Console.WriteLine("Applying evening bandwidth settings");
+    newSettings.MaxUploadSpeed = 100 * 1024;   // 100 KB/s
+    newSettings.MaxDownloadSpeed = 200 * 1024; // 200 KB/s
+    newSettings.MaxConnections = 60;
+    newSettings.UploadSlots = 8;
+}
+
+// Apply the new settings to the manager
+manager.Settings = newSettings;
+```
+
 ## Default Values
 
 | Setting | Default Value |
